@@ -279,82 +279,145 @@ European exchanges, so the calendar overlap is good. Currency difference
 ## Phase 2: Cointegration screening
 
 ### What I built
-`pair_screening.py` — runs the Engle-Granger test across all candidate pairs
-on training data only, applies multiple-testing corrections, and selects one
-pair to carry forward.
+`pair_screening.py` — Engle-Granger test across all candidate pairs on
+training data only, with multiple-testing corrections and pair selection.
+`cointegration.py` — manual implementation of the same test for verification.
 
 ### Method
 1. Load cached prices once, pass into each pair lookup
 2. Exclude BEPC_CWEN on data grounds (decided in Phase 1, before any testing)
-3. For each remaining pair: split, take training period, run `coint()`
-4. Also compute correlation of daily returns for comparison
-5. Sort by p-value, apply Bonferroni and Holm corrections
-6. Select the top pair, but only if it clears the standard threshold
+3. For each pair: split, take training only, run `coint()`
+4. Also compute return correlation and run the manual implementation
+5. Sort by p-value, apply Bonferroni and Holm
+6. Select top pair, but only if it clears the standard threshold
 
 ### Key decisions
 
-**Training data only.** The test set is loaded but never touched. Running
-the screen on full data would contaminate the out-of-sample test.
+**Training data only.** `test` is unpacked but never used. Screening on full
+data would contaminate the out-of-sample period.
 
 **Correlation of returns, not prices.** Two series that both trend upward
-show high price correlation regardless of any real relationship, because
-both correlate with time. Return correlation asks the actual question.
+correlate highly with time regardless of any real relationship.
 
-**Thresholds fixed before testing.** ALPHA = 0.05 is convention (Fisher),
-not derived. With 7 simultaneous tests the family-wise error rate is
-1 - 0.95^7 = 30%, so corrections are reported alongside.
+**Thresholds fixed before testing.** ALPHA = 0.05 is convention (Fisher), not
+derived. With 7 tests the family-wise error rate is 1 - 0.95^7 = 30%.
 
-**Bonferroni:** alpha/n = 0.00714. Caps FWER at 0.05 via the union bound.
-Holds under arbitrary dependence, which matters because five of the seven
+**Bonferroni** = alpha/n = 0.0071. Caps FWER at 0.05 via the union bound,
+which holds under arbitrary dependence. Matters here because five of the seven
 pairs are energy names sharing common drivers.
 
-**Holm-Bonferroni:** step-down, thresholds alpha/(n-i) by rank, stopping at
-the first failure. Uniformly more powerful than Bonferroni, same guarantee.
-The stopping rule is essential: without it the relaxation isn't earned and
-the guarantee collapses.
+**Holm-Bonferroni.** Step-down, thresholds alpha/(n-i) by rank, stopping at
+the first failure. The stopping rule is what makes the relaxation legitimate:
+you only get to correct for six hypotheses if you actually eliminated one.
 
-**Error on no pass.** `iloc[0]` returns the lowest p-value unconditionally,
-even if nothing was significant. A raised error prevents silently
-backtesting a non-cointegrated pair.
+**Error on no pass.** `iloc[0]` returns the lowest p-value whether or not it
+is significant, so an explicit check prevents silently backtesting a pair with
+no evidence behind it.
 
 ### Results (training period 2014-2021)
 
-| pair      | pvalue | corr   | pass_standard | pass_bonf | pass_holm |
-|-----------|--------|--------|---------------|-----------|-----------|
-| SHEL_BP   | 0.0209 | 0.8890 | True          | False     | False     |
-| NEE_DUK   | 0.1158 | 0.7739 | False         | False     | False     |
-| ENPH_SEDG | 0.1428 | 0.4743 | False         | False     | False     |
-| MPC_VLO   | 0.3006 | 0.8368 | False         | False     | False     |
-| SLB_HAL   | 0.5264 | 0.8531 | False         | False     | False     |
-| XOM_CVX   | 0.7028 | 0.8320 | False         | False     | False     |
-| VWS_NDX1  | 0.9334 | 0.5152 | False         | False     | False     |
+| pair      | coint_stat | pvalue | manual_stat | manual_pvalue | corr   | holm_alpha | pass_holm |
+|-----------|-----------|--------|-------------|---------------|--------|------------|-----------|
+| SHEL_BP   | -3.6549   | 0.0209 | -3.6549     | 0.0003        | 0.8890 | 0.0071     | False     |
+| NEE_DUK   | -2.9768   | 0.1158 | -2.9768     | 0.0029        | 0.7739 | 0.0083     | False     |
+| ENPH_SEDG | -2.8757   | 0.1428 | -2.8757     | 0.0039        | 0.4743 | 0.0100     | False     |
+| MPC_VLO   | -2.4520   | 0.3006 | -2.4520     | 0.0137        | 0.8368 | 0.0125     | False     |
+| SLB_HAL   | -2.0042   | 0.5264 | -2.0042     | 0.0431        | 0.8531 | 0.0167     | False     |
+| XOM_CVX   | -1.6422   | 0.7028 | -1.6422     | 0.0950        | 0.8320 | 0.0250     | False     |
+| VWS_NDX1  | -0.8099   | 0.9334 | -0.8099     | 0.3664        | 0.5152 | 0.0500     | False     |
 
-### Conclusions
+### Conclusions: screening
 
-**Correlation and cointegration rank differently, empirically.** ENPH_SEDG
-has the lowest correlation (0.47) but the third-lowest p-value. XOM_CVX has
-0.83 correlation and a p-value of 0.70, a flat rejection. SLB_HAL is second
-on correlation and fifth on cointegration. This is direct evidence from my
-own data that the two measure different properties.
+**Correlation and cointegration rank differently.** ENPH_SEDG has the lowest
+correlation (0.47) but the third-lowest p-value. XOM_CVX has 0.83 correlation
+and p = 0.70, a flat rejection. SLB_HAL is second on correlation and fifth on
+cointegration. Direct evidence from my own data that the two measure different
+properties.
 
-**One pair passes at the conventional level.** SHEL_BP, p = 0.021. Both
+**One pair passes at the conventional level.** SHEL_BP, p = 0.0209. Both
 London-listed, same currency and regulatory regime, similar transition
 strategies.
 
-**Nothing survives correction for multiple testing.** With seven tests, a
-p-value of 0.021 cannot distinguish a real relationship from the strongest
-of seven draws. Holm does not change this: the top-ranked pair fails at
-alpha/7, so the step-down terminates immediately.
+**Nothing survives correction for multiple testing.** With seven tests, 0.0209
+cannot distinguish a real relationship from the best of seven draws. Holm does
+not change this: the top-ranked pair fails at alpha/7, so the step-down
+terminates immediately and every row below inherits the failure.
 
 **This is a finding, not a failure.** Cointegration among liquid,
 economically similar equity pairs appears rare over an eight-year horizon.
-Consistent with a market in which persistent relative mispricings are
-largely arbitraged away, and with Gatev et al.'s observation that raw
-returns declined sharply after the strategy became widely known.
+Consistent with an efficient market and with Gatev et al.'s observation that
+raw returns declined sharply once the strategy became widely known.
 
-**Proceeding with SHEL_BP** to Phase 3, with the caveat above stated
-explicitly. The backtest then answers a separate question: even taking the
-weak evidence at face value, does trading it survive transaction costs?
+**Proceeding with SHEL_BP** to Phase 3 with the caveat stated. The backtest
+answers a separate question: even taking the weak evidence at face value, does
+trading it survive transaction costs?
+
+---
+
+### Verification: manual Engle-Granger
+
+Built `cointegration.py` to check what `coint()` does internally rather than
+treating it as a black box.
+
+- `estimate_hedge_ratio(a, b)` — OLS from first principles. Beta as
+  cov(a,b)/var(b), alpha from the means, residuals as actual minus predicted.
+  Reused in Phase 3 for the spread.
+- `engle_granger(a, b)` — calls the above, runs `adfuller` on the residuals.
+
+**Regression verified against statsmodels** on SHEL_BP:
+beta 1.687370 vs 1.687370, alpha -0.086446 vs -0.086446, residual mean
+-6.74e-15. The residual mean confirms mean-zero-by-construction, which
+justifies `regression="n"` in the ADF call.
+
+**Test statistics match exactly on all seven pairs**, to four decimal places.
+The two implementations perform identical arithmetic.
+
+**p-values do not.** Manual is lower on every pair, and the gap varies:
+70x on SHEL_BP, 22x on MPC_VLO, 7x on XOM_CVX, 2.5x on VWS_NDX1. The ratio
+compresses as the statistic moves toward zero, consistent with two
+differently-shaped distributions rather than a fixed offset.
+
+**Why.** Critical values come from simulating a procedure on data where the
+null is true, then seeing where the bottom 5% falls. The two functions are
+benchmarked on different simulations:
+
+- `adfuller` — simulate one random walk, test it. No fitting.
+- `coint` — simulate two random walks, regress one on the other, test the
+  residuals.
+
+The second produces more negative statistics on average, because the
+regression finds whatever combination looks most stationary even when the two
+series are unrelated. Its 5% cutoff therefore sits further left.
+
+I ran coint's procedure, but `adfuller` only receives the residual array. It
+cannot know a beta was estimated to minimise those exact numbers, so it applies
+the no-fitting table. Right experiment, wrong benchmark. `coint` takes the two
+price series directly, does the regression itself, and selects the MacKinnon
+table matching the number of variables.
+
+**Same principle as Bonferroni.** More searching requires a higher bar.
+
+**Not a sample size effect** (both tests see the same 2015 observations) and
+not an artefact of hand-rolling the OLS (statsmodels gives the same beta). The
+issue is that beta was estimated at all.
+
+### Conclusions: verification
+
+**The correction is not cosmetic.** Under the naive lookup, five of seven
+pairs clear 0.05 and three clear Bonferroni. Under `coint`, one clears 0.05
+and none clear Bonferroni. The wrong table converts a null result into an
+apparently strong one.
+
+**MPC_VLO is the clearest single case.** Statistic -2.4520 either way.
+`coint` reports p = 0.3006, a flat rejection. Manual reports p = 0.0137,
+significant at 5%. Chaining OLS and adfuller without knowing about MacKinnon
+would have led to trading this pair.
+
+**Ranking is identical under both**, as it must be, since both are monotonic
+in the same statistic. Confirms nothing else differs between the two paths.
+
+**`coint()` is the correct function to report.** The manual p-values are shown
+for comparison only and take no part in the pass/fail decision.
 
 ### What I did not do
 Did not search for additional pairs after seeing the results. Testing seven

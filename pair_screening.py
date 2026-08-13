@@ -2,6 +2,7 @@
 # Engle-Granger cointegration test across all candidate pairs, training data only.
 # Selects one pair to carry into the backtest.
 
+from cointegration import engle_granger
 from data import download_prices, get_pair, split, PAIRS
 from statsmodels.tsa.stattools import coint
 import pandas as pd
@@ -31,17 +32,23 @@ for name in TESTED:
     #only, so the out-of-sample period stays clean.
     train, test = split(pair)
 
-    _, pvalue, _ = coint(train.iloc[:, 0], train.iloc[:, 1])
+    coint_stat, pvalue, _ = coint(train.iloc[:, 0], train.iloc[:, 1])
 
     #returns, not prices. Two series that both trend upward correlate highly
     #with time regardless of any real relationship between them.
     corr = train.iloc[:, 0].pct_change().corr(train.iloc[:, 1].pct_change())
 
+    #run manual cointegration test to compare against statsmodels
+    manual_stat, manual_p = engle_granger(train.iloc[:, 0], train.iloc[:, 1])
+
     results.append({
         "pair": name,
+        "coint_stat": coint_stat,
         "pvalue": pvalue,
         "pass_standard": pvalue < ALPHA,
         "pass_bonferroni": pvalue < ALPHA_BONF,
+        "manual_stat": manual_stat,
+        "manual_pvalue": manual_p,
         "corr": corr
     })
 
@@ -57,8 +64,6 @@ results_table["holm_alpha"] = ALPHA / (n - results_table.index)
 results_table["holm_raw"] = results_table["pvalue"] < results_table["holm_alpha"]
 results_table["pass_holm"] = results_table["holm_raw"].cummin().astype(bool)
 results_table = results_table.drop(columns="holm_raw")
-
-print(results_table)
 
 ## RESULTS
 best = results_table.iloc[0]
