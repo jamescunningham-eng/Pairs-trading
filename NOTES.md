@@ -6,7 +6,7 @@
 
 **Market Neutral** - Long one stock, short other, so overall exposure to market is near zero. The bet is on the relative price not the direction. So returns dont correlate with the S&P.
 
-**Hedge ratio** - how many units of stock B to hold against one unit of stock A. Comes from the slope of an OLS regression of A on B. Needed because the two stocks arent the same price or volatility. 1:1 is not neutral.
+**Hedge ratio** - how many units of stock B to hold against one unit of stock A. Comes from the slope of an OLS regression of A on B. Needed because the two stocks arent the same price or volatility. 1:1 is not neutral. Beta
 
 **Spread** - The gap between the two prices, after adjusting for the hedge ratio. This is the series to trade. Everything dowstream is built on it.
 
@@ -208,3 +208,157 @@ Test all eight on training data only. Report every p-value including
 failures. Apply Bonferroni correction (0.05 / 8 = 0.00625) alongside
 uncorrected values. Progress the strongest cointegrated pair to the
 strategy. Test period touched once, at the end.
+
+## Phase 1: Data layer
+
+### What I built
+`data.py` — downloads, caches and aligns daily adjusted close prices for
+all candidate pairs, and splits into training and test periods.
+
+### Functions
+
+**`all_tickers()`**
+Returns every unique ticker across all pairs. Uses a set so duplicates are
+dropped, meaning each ticker is only downloaded once.
+
+**`download_prices(force_refresh=False)`**
+Loads from `data/prices.csv` if it exists, otherwise downloads from yfinance
+and caches. Defaults to using the cache so results are reproducible between
+runs.
+
+**`get_pair(pair_name, prices=None)`**
+Returns a two-column table for one pair, with `.dropna()` removing any date
+where either stock did not trade. This is the alignment step. Done per pair
+rather than globally so US and European exchange calendars do not penalise
+each other.
+
+**`split(df)`**
+Splits on the fixed dates: training to end 2021, test from 2022. Test set to
+be used once, at the end.
+
+### Key decisions
+- **Adjusted close** (`auto_adjust=True`), not raw close. Raw prices jump at
+  ex-dividend dates, which the strategy would misread as signals.
+- **Frozen end date** (2026-08-11) rather than today's date, so the test
+  period does not silently grow between runs.
+- **Cached to CSV.** Re-downloading each run would change the sample and make
+  reported results irreproducible.
+- **Split dates fixed before any testing**, to prevent choosing them based on
+  what looks favourable.
+
+### Results
+Data downloaded 12 August 2026. 3254 rows, 16 tickers, 2014-01-02 to
+2026-08-10.
+
+| Pair | Rows | Train | Test | First date |
+|---|---|---|---|---|
+| XOM_CVX | 3169 | 2015 | 1154 | 2014-01-02 |
+| SLB_HAL | 3169 | 2015 | 1154 | 2014-01-02 |
+| MPC_VLO | 3169 | 2015 | 1154 | 2014-01-02 |
+| SHEL_BP | 3169 | 2015 | 1154 | 2014-01-02 |
+| ENPH_SEDG | 2860 | 1706 | 1154 | 2015-03-26 |
+| NEE_DUK | 3169 | 2015 | 1154 | 2014-01-02 |
+| BEPC_CWEN | 1518 | 364 | 1154 | 2020-07-24 |
+| VWS_NDX1 | 3132 | 1987 | 1145 | 2014-01-02 |
+
+### Conclusions
+
+**BEPC_CWEN excluded.** BEPC listed July 2020, leaving only 364 training
+days. Too short to estimate a long-run cointegrating relationship reliably.
+Excluded on data grounds before any cointegration test was run, so this is
+not a results-based exclusion. Seven pairs proceed to Phase 2.
+
+**ENPH_SEDG starts March 2015**, as SEDG listed then. 1706 training days is
+sufficient. An initial download failure for ENPH was a yfinance caching bug,
+resolved by clearing the cache and re-downloading.
+
+**VWS_NDX1 has 3132 rows** despite the two stocks trading on different
+European exchanges, so the calendar overlap is good. Currency difference
+(DKK and EUR) noted as a limitation.
+
+## Phase 2: Cointegration screening
+
+### What I built
+`pair_screening.py` — runs the Engle-Granger test across all candidate pairs
+on training data only, applies multiple-testing corrections, and selects one
+pair to carry forward.
+
+### Method
+1. Load cached prices once, pass into each pair lookup
+2. Exclude BEPC_CWEN on data grounds (decided in Phase 1, before any testing)
+3. For each remaining pair: split, take training period, run `coint()`
+4. Also compute correlation of daily returns for comparison
+5. Sort by p-value, apply Bonferroni and Holm corrections
+6. Select the top pair, but only if it clears the standard threshold
+
+### Key decisions
+
+**Training data only.** The test set is loaded but never touched. Running
+the screen on full data would contaminate the out-of-sample test.
+
+**Correlation of returns, not prices.** Two series that both trend upward
+show high price correlation regardless of any real relationship, because
+both correlate with time. Return correlation asks the actual question.
+
+**Thresholds fixed before testing.** ALPHA = 0.05 is convention (Fisher),
+not derived. With 7 simultaneous tests the family-wise error rate is
+1 - 0.95^7 = 30%, so corrections are reported alongside.
+
+**Bonferroni:** alpha/n = 0.00714. Caps FWER at 0.05 via the union bound.
+Holds under arbitrary dependence, which matters because five of the seven
+pairs are energy names sharing common drivers.
+
+**Holm-Bonferroni:** step-down, thresholds alpha/(n-i) by rank, stopping at
+the first failure. Uniformly more powerful than Bonferroni, same guarantee.
+The stopping rule is essential: without it the relaxation isn't earned and
+the guarantee collapses.
+
+**Error on no pass.** `iloc[0]` returns the lowest p-value unconditionally,
+even if nothing was significant. A raised error prevents silently
+backtesting a non-cointegrated pair.
+
+### Results (training period 2014-2021)
+
+| pair      | pvalue | corr   | pass_standard | pass_bonf | pass_holm |
+|-----------|--------|--------|---------------|-----------|-----------|
+| SHEL_BP   | 0.0209 | 0.8890 | True          | False     | False     |
+| NEE_DUK   | 0.1158 | 0.7739 | False         | False     | False     |
+| ENPH_SEDG | 0.1428 | 0.4743 | False         | False     | False     |
+| MPC_VLO   | 0.3006 | 0.8368 | False         | False     | False     |
+| SLB_HAL   | 0.5264 | 0.8531 | False         | False     | False     |
+| XOM_CVX   | 0.7028 | 0.8320 | False         | False     | False     |
+| VWS_NDX1  | 0.9334 | 0.5152 | False         | False     | False     |
+
+### Conclusions
+
+**Correlation and cointegration rank differently, empirically.** ENPH_SEDG
+has the lowest correlation (0.47) but the third-lowest p-value. XOM_CVX has
+0.83 correlation and a p-value of 0.70, a flat rejection. SLB_HAL is second
+on correlation and fifth on cointegration. This is direct evidence from my
+own data that the two measure different properties.
+
+**One pair passes at the conventional level.** SHEL_BP, p = 0.021. Both
+London-listed, same currency and regulatory regime, similar transition
+strategies.
+
+**Nothing survives correction for multiple testing.** With seven tests, a
+p-value of 0.021 cannot distinguish a real relationship from the strongest
+of seven draws. Holm does not change this: the top-ranked pair fails at
+alpha/7, so the step-down terminates immediately.
+
+**This is a finding, not a failure.** Cointegration among liquid,
+economically similar equity pairs appears rare over an eight-year horizon.
+Consistent with a market in which persistent relative mispricings are
+largely arbitraged away, and with Gatev et al.'s observation that raw
+returns declined sharply after the strategy became widely known.
+
+**Proceeding with SHEL_BP** to Phase 3, with the caveat above stated
+explicitly. The backtest then answers a separate question: even taking the
+weak evidence at face value, does trading it survive transaction costs?
+
+### What I did not do
+Did not search for additional pairs after seeing the results. Testing seven
+pre-registered pairs, finding one weak pass, then expanding the search would
+be data snooping, and the multiple-testing burden would increase rather than
+reset. Any broader search would be a separate, clearly-labelled exploratory
+analysis.

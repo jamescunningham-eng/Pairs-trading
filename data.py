@@ -20,8 +20,7 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
-# --- Configuration -----------------------------------------------------------
-
+#Configuration
 START = "2014-01-01"
 END = "2026-08-11"          # frozen: note this date in the README
 
@@ -44,7 +43,7 @@ PAIRS = {
 }
 
 
-# --- Download and cache ------------------------------------------------------
+#Download and cache
 
 def all_tickers():
     """Return every unique ticker across all candidate pairs."""
@@ -71,7 +70,7 @@ def download_prices(force_refresh=False):
         all_tickers(),
         start=START,
         end=END,
-        auto_adjust=True,   # set explicitly: the default has changed between versions
+        auto_adjust=True,   # avgs ticker to avoid stock drops when dividends paid. set explicitly: the default has changed between versions
         progress=False,
     )
 
@@ -86,7 +85,7 @@ def download_prices(force_refresh=False):
     return prices
 
 
-# --- Per-pair access ---------------------------------------------------------
+#Per-pair access 
 
 def get_pair(pair_name, prices=None):
     """
@@ -119,7 +118,7 @@ def split(df):
     return train, test
 
 
-# --- Sanity check ------------------------------------------------------------
+#Sanity check 
 
 if __name__ == "__main__":
     prices = download_prices()
