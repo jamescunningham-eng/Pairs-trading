@@ -56,8 +56,7 @@ def engle_granger(a, b, regression="n"):
 
 if __name__ == "__main__":
 
-    #test against statsmodels for our progressed pair 
-    
+    #test against statsmodels for our progressed PAIR
     from data import get_pair, split
     from statsmodels.tsa.stattools import coint
     import statsmodels.api as sm
