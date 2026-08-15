@@ -1,6 +1,7 @@
 from data import get_pair , split 
 from cointegration import estimate_hedge_ratio
 from statsmodels.tsa.stattools import adfuller 
+import numpy as np
 
 ## construct spread for our chosen pair 
 pair = get_pair("SHEL_BP")
@@ -39,3 +40,28 @@ summarise_spread(train_spread, "train spread (2014-2021)", regression ="n")
 #run botn "n" for comparison with train and "c" to let the test fit its own level
 summarise_spread(test_spread, "Test spread (2022-2026) (no constant)", regression="n")
 summarise_spread(test_spread, "Test spread (2022 - 2026) (constant fitted)", regression="c")
+
+
+def half_life(spread):
+    # Half life of our spread gives the time for spread to halfway return back to 0
+    # lamda determines whether the half life means anything by assessing whether there is a restoring force
+    spread_yesterday = spread.shift(1).iloc[1:]
+    spread_change = spread.diff().iloc[1:]
+
+    _,lamda,_ = estimate_hedge_ratio(spread_change, spread_yesterday)
+
+    if lamda >= 0:
+        return lamda, None
+    
+    hlife = -np.log(2)/lamda
+    return lamda, hlife
+
+lam_train, hl_train = half_life(train_spread)
+lam_test, hl_test = half_life(test_spread)
+
+print(f"train_lambda {lam_train:.5} - train-life {hl_train:.1f} days")
+if hl_test == None:
+    print(f"test_lambda {lam_test:.5} - no mean reversion, half-life undefined")
+else: 
+    print(f"test_lambda {lam_test:.5} - half-life {hl_test:.1f} days")
+ 

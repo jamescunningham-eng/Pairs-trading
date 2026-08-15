@@ -134,3 +134,4 @@ if __name__ == "__main__":
         train, test = split(pair)
         first = pair.index.min().date() if len(pair) else "no data"
         print(f"{name:<12} {len(pair):>6} {len(train):>7} {len(test):>7}  {first}")
+
