@@ -9,20 +9,24 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-#chosen in Phase 2. Only pair to clear alpha=0.05, does not survive correction.
-pair = get_pair("SHEL_BP")
-train, test = split(pair)
+def build_spreads(pair_name="SHEL_BP"):
+    #Fit alpha and beta on training, apply the same values to test prices.
+    #Refitting on test would use information that did not eist at the time 
+    
+    pair = get_pair(pair_name)
+    train, test = split(pair)
 
-#alpha and beta fitted on training only. In Jan 2022 this is all we would have had.
-alpha, beta, train_spread = estimate_hedge_ratio(train.iloc[:, 0], train.iloc[:, 1])
+    #alpha and beta fitted on training only. In Jan 2022 this is all we would have had.
+    alpha, beta, train_spread = estimate_hedge_ratio(train.iloc[:, 0], train.iloc[:, 1])
 
-#same alpha and beta applied to test prices. Refitting here would use information
-#that did not exist at the time and the out-of-sample result would be worthless.
-test_spread = test.iloc[:, 0] - (alpha + beta * test.iloc[:, 1])
+    #same alpha and beta applied to test prices. Refitting here would use information
+    #that did not exist at the time and the out-of-sample result would be worthless.
+    test_spread = test.iloc[:, 0] - (alpha + beta * test.iloc[:, 1])
 
+    return alpha, beta, train_spread, test_spread
 
 def summarise_spread(spread, label, regression="n"):
-    """ADF and summary stats. Diagnostic on test, not a pass/fail decision."""
+    #ADF and summary stats. Diagnostic on test, not a pass/fail decision
 
     stat, pvalue, lags, nobs, _, _ = adfuller(spread, regression=regression)
 
@@ -121,37 +125,42 @@ def plot_reversion(spread, label, path):
     print(f"saved {path}")
 
 
-## DIAGNOSTICS
-#training residuals are mean zero by construction, so no constant left to fit
-summarise_spread(train_spread, "train spread (2014-2021)", regression="n")
 
-#test residuals are predicted, not fitted, so nothing forces them to zero.
-#"n" tests the assumption the strategy actually makes. "c" lets the test find
-#its own level, which distinguishes a level shift from a full breakdown.
-summarise_spread(test_spread, "test spread (2022-2026), no constant", regression="n")
-summarise_spread(test_spread, "test spread (2022-2026), constant fitted", regression="c")
+if __name__ == "__main__":
+    # chosen in phase 2 
+    alpha, beta, train_spread, test_spread = build_spreads()
 
+    ## DIAGNOSTICS
+    #training residuals are mean zero by construction, so no constant left to fit
+    summarise_spread(train_spread, "train spread (2014-2021)", regression="n")
 
-## HALF LIFE
-#train half-life is a parameter: it sets the Phase 4 rolling window.
-c_train, lam_train, hl_train, mean_train = half_life(train_spread)
-
-#test half-life is diagnostic only. Nothing downstream uses it.
-c_test, lam_test, hl_test, mean_test = half_life(test_spread)
-
-print(f"\ntrain  lambda {lam_train:.5f}   half-life {hl_train:.1f} days"
-      f"   long-run mean {mean_train:.4f}")
-
-if hl_test is None:
-    print(f"test   lambda {lam_test:.5f}   no restoring force, half-life undefined")
-else:
-    print(f"test   lambda {lam_test:.5f}   half-life {hl_test:.1f} days"
-          f"   long-run mean {mean_test:.4f}")
-    print("       lambda is not significantly different from zero (ADF p = 0.64),"
-          " so treat both as point estimates the data cannot support")
+    #test residuals are predicted, not fitted, so nothing forces them to zero.
+    #"n" tests the assumption the strategy actually makes. "c" lets the test find
+    #its own level, which distinguishes a level shift from a full breakdown.
+    summarise_spread(test_spread, "test spread (2022-2026), no constant", regression="n")
+    summarise_spread(test_spread, "test spread (2022-2026), constant fitted", regression="c")
 
 
-## PLOTS
-plot_spread(train_spread, test_spread)
-plot_reversion(train_spread, "train 2014-2021", "results/reversion_train.png")
-plot_reversion(test_spread, "test 2022-2026", "results/reversion_test.png")
+    ## HALF LIFE
+    #train half-life is a parameter: it sets the Phase 4 rolling window.
+    c_train, lam_train, hl_train, mean_train = half_life(train_spread)
+
+    #test half-life is diagnostic only. Nothing downstream uses it.
+    c_test, lam_test, hl_test, mean_test = half_life(test_spread)
+
+    print(f"\ntrain  lambda {lam_train:.5f}   half-life {hl_train:.1f} days"
+        f"   long-run mean {mean_train:.4f}")
+
+    if hl_test is None:
+        print(f"test   lambda {lam_test:.5f}   no restoring force, half-life undefined")
+    else:
+        print(f"test   lambda {lam_test:.5f}   half-life {hl_test:.1f} days"
+            f"   long-run mean {mean_test:.4f}")
+        print("       lambda is not significantly different from zero (ADF p = 0.64),"
+            " so treat both as point estimates the data cannot support")
+
+
+    ## PLOTS
+    plot_spread(train_spread, test_spread)
+    plot_reversion(train_spread, "train 2014-2021", "results/reversion_train.png")
+    plot_reversion(test_spread, "test 2022-2026", "results/reversion_test.png")
